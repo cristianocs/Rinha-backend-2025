@@ -1,8 +1,6 @@
 # app.rb (VERSÃO FINAL CORRIGIDA)
 
 require 'sinatra/base'
-require 'pg'
-require 'connection_pool'
 require 'json'
 require 'puma'
 require 'httparty'
@@ -16,13 +14,7 @@ class RinhaAPI < Sinatra::Base # <-- CORRIGIDO AQUI
     set :environment, :production
   end
 
-  DB_POOL = ConnectionPool.new(size: 25, timeout: 5) do
-    PG.connect(
-      host: 'db', user: 'rinha', password: 'rinha-password', dbname: 'rinha_db'
-    )
-  end
-
-  REDIS_URL = ENV.fetch('REDIS_URL', 'redis://localhost:6379/0')
+  REDIS_URL = ENV.fetch('REDIS_URL', 'redis://redis:6379/1') # Usando DB 1 para pagamentos
   REDIS = Redis.new(url: REDIS_URL)
   
   PROCESSORS = {
@@ -30,6 +22,7 @@ class RinhaAPI < Sinatra::Base # <-- CORRIGIDO AQUI
     fallback: 'http://payment-processor-fallback:8080'
   }
   HEALTH_CHECK_INTERVAL = 5
+  PAYMENTS_KEY = "payments_sorted_set"
 
   post '/payments' do
     content_type :json
@@ -47,25 +40,31 @@ class RinhaAPI < Sinatra::Base # <-- CORRIGIDO AQUI
   end
 
   get '/payments-summary' do
-    begin
-      content_type :json
-      from_param = params['from']
-      to_param = params['to']
-      from_time = from_param ? Time.parse(from_param).utc : nil
-      to_time = to_param ? Time.parse(to_param).utc : nil
-      query, query_params = build_summary_query(from_time, to_time)
-      result = DB_POOL.with { |conn| conn.exec_params(query, query_params).first }
-      unless result
-        halt 200, { default: { totalRequests: 0, totalAmount: 0.0 }, fallback: { totalRequests: 0, totalAmount: 0.0 } }.to_json
-      end
-      {
-        default: { totalRequests: result['default_requests'].to_i, totalAmount: result['default_amount'].to_f },
-        fallback: { totalRequests: result['fallback_requests'].to_i, totalAmount: result['fallback_amount'].to_f }
-      }.to_json
-    rescue => e
-      logger.error "ERRO FATAL NO SUMMARY: #{e.class} - #{e.message}"
-      halt 500, { error: 'Erro interno ao processar o resumo' }.to_json
+    content_type :json
+    from_param = params['from']
+    to_param = params['to']
+    
+    # Timestamps em microsegundos para o score do Redis
+    from_time = from_param ? (Time.parse(from_param).to_f * 1_000_000).to_i : '-inf'
+    to_time = to_param ? (Time.parse(to_param).to_f * 1_000_000).to_i : '+inf'
+
+    # Busca todos os pagamentos no range de tempo do Sorted Set
+    payments = REDIS.zrangebyscore(PAYMENTS_KEY, from_time, to_time)
+
+    summary = {
+      default: { totalRequests: 0, totalAmount: 0.0 },
+      fallback: { totalRequests: 0, totalAmount: 0.0 }
+    }
+
+    # Agrega os resultados em memória (muito rápido)
+    payments.each do |payment_str|
+      amount, processor, _ = payment_str.split(':', 3)
+      processor_sym = processor.to_sym
+      summary[processor_sym][:totalRequests] += 1
+      summary[processor_sym][:totalAmount] += amount.to_f
     end
+
+    summary.to_json
   end
 
   private
@@ -87,7 +86,7 @@ class RinhaAPI < Sinatra::Base # <-- CORRIGIDO AQUI
           timeout: 2
         )
         if response.success?
-          save_payment(correlation_id, amount, processor_name.to_s, request_time.strftime('%Y-%m-%d %H:%M:%S.%N'))
+          save_payment_in_memory(correlation_id, amount, processor_name.to_s)
         else
           set_processor_health(processor_name, true)
         end
@@ -105,6 +104,16 @@ class RinhaAPI < Sinatra::Base # <-- CORRIGIDO AQUI
     end
   end
   
+  def save_payment_in_memory(correlation_id, amount, processor)
+    # Score é o tempo atual em microsegundos para garantir unicidade e ordem
+    score = (Time.now.to_f * 1_000_000).to_i
+    # Membro é uma string única para evitar colisões
+    member = "#{amount}:#{processor}:#{correlation_id}"
+    
+    # Adiciona ao Sorted Set. Operação atômica e muito rápida.
+    REDIS.zadd(PAYMENTS_KEY, score, member)
+  end
+
   def choose_processor
     return :default unless processor_failing?(:default)
     check_health_if_needed(:fallback)
