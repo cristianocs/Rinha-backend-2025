@@ -1,7 +1,6 @@
 version: "3.8"
 
 services:
-  # Instâncias da API
   api01: &api
     build: ./api
     hostname: api01
@@ -13,7 +12,6 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - RUBY_GC_HEAP_INIT_SLOTS=200000
       - RUBY_GC_HEAP_FREE_SLOTS=100000
-    # Limites de recursos (0.6 CPU e 150MB por instância)
     deploy:
       resources:
         limits:
@@ -21,13 +19,10 @@ services:
           memory: "85MB"
     networks:
       - rinha-net
-      - payment-processor # Rede externa para se comunicar com os processadores
 
   api02:
-    <<: *api # Reutiliza a configuração da api01
-    hostname: api02
+    <<: *api
 
-  # Banco de Dados
   db:
     image: postgres:16-alpine
     hostname: db
@@ -37,11 +32,8 @@ services:
       - POSTGRES_DB=rinha_db
     volumes:
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
-      # Monta o arquivo de configuração dentro do contêiner
       - ./db/performance.conf:/etc/postgresql/performance.conf
-    # Diz ao Postgres para carregar nosso arquivo de configuração
     command: postgres -c 'config_file=/etc/postgresql/performance.conf'
-    # Limites de recursos (0.15 CPU e 50MB)
     deploy:
       resources:
         limits:
@@ -50,7 +42,6 @@ services:
     networks:
       - rinha-net
 
-  # Load Balancer
   nginx:
     image: nginx:1.25.3-alpine
     volumes:
@@ -60,7 +51,6 @@ services:
       - api02
     ports:
       - "9999:9999"
-    # Limites de recursos (0.15 CPU e 20MB)
     deploy:
       resources:
         limits:
@@ -80,10 +70,8 @@ services:
           cpus: "0.05"
           memory: "15MB"
 
-# Definição das redes
 networks:
   rinha-net:
     driver: bridge
-  # Declaração da rede externa para se conectar aos processadores de pagamento
   payment-processor:
     external: true
