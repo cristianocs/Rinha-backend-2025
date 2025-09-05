@@ -5,10 +5,8 @@ services:
     build: ./api
     hostname: api01
     depends_on:
-      - db
       - redis
     environment:
-      - DATABASE_URL=postgres://rinha:rinha-password@db/rinha_db
       - REDIS_URL=redis://redis:6379/0
       - RUBY_GC_HEAP_INIT_SLOTS=200000
       - RUBY_GC_HEAP_FREE_SLOTS=100000
