@@ -1,12 +1,10 @@
-# app.rb (VERSÃO FINAL CORRIGIDA)
-
 require 'sinatra/base'
 require 'json'
 require 'puma'
 require 'httparty'
 require 'redis'
 
-class RinhaAPI < Sinatra::Base # <-- CORRIGIDO AQUI
+class RinhaAPI < Sinatra::Base
   configure do
     set :server, :puma
     set :bind, '0.0.0.0'
@@ -14,7 +12,7 @@ class RinhaAPI < Sinatra::Base # <-- CORRIGIDO AQUI
     set :environment, :production
   end
 
-  REDIS_URL = ENV.fetch('REDIS_URL', 'redis://redis:6379/1') # Usando DB 1 para pagamentos
+  REDIS_URL = ENV.fetch('REDIS_URL', 'redis://redis:6379/1')
   REDIS = Redis.new(url: REDIS_URL)
   
   PROCESSORS = {
@@ -44,11 +42,9 @@ class RinhaAPI < Sinatra::Base # <-- CORRIGIDO AQUI
     from_param = params['from']
     to_param = params['to']
     
-    # Timestamps em microsegundos para o score do Redis
     from_time = from_param ? (Time.parse(from_param).to_f * 1_000_000).to_i : '-inf'
     to_time = to_param ? (Time.parse(to_param).to_f * 1_000_000).to_i : '+inf'
 
-    # Busca todos os pagamentos no range de tempo do Sorted Set
     payments = REDIS.zrangebyscore(PAYMENTS_KEY, from_time, to_time)
 
     summary = {
@@ -56,7 +52,6 @@ class RinhaAPI < Sinatra::Base # <-- CORRIGIDO AQUI
       fallback: { totalRequests: 0, totalAmount: 0.0 }
     }
 
-    # Agrega os resultados em memória (muito rápido)
     payments.each do |payment_str|
       amount, processor, _ = payment_str.split(':', 3)
       processor_sym = processor.to_sym
@@ -105,12 +100,9 @@ class RinhaAPI < Sinatra::Base # <-- CORRIGIDO AQUI
   end
   
   def save_payment_in_memory(correlation_id, amount, processor)
-    # Score é o tempo atual em microsegundos para garantir unicidade e ordem
     score = (Time.now.to_f * 1_000_000).to_i
-    # Membro é uma string única para evitar colisões
     member = "#{amount}:#{processor}:#{correlation_id}"
     
-    # Adiciona ao Sorted Set. Operação atômica e muito rápida.
     REDIS.zadd(PAYMENTS_KEY, score, member)
   end
 
