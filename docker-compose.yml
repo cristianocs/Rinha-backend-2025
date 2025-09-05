@@ -23,25 +23,6 @@ services:
   api02:
     <<: *api
 
-  db:
-    image: postgres:16-alpine
-    hostname: db
-    environment:
-      - POSTGRES_USER=rinha
-      - POSTGRES_PASSWORD=rinha-password
-      - POSTGRES_DB=rinha_db
-    volumes:
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
-      - ./db/performance.conf:/etc/postgresql/performance.conf
-    command: postgres -c 'config_file=/etc/postgresql/performance.conf'
-    deploy:
-      resources:
-        limits:
-          cpus: "0.6"
-          memory: "150MB"
-    networks:
-      - rinha-net
-
   nginx:
     image: nginx:1.25.3-alpine
     volumes:
@@ -68,7 +49,7 @@ services:
       resources:
         limits:
           cpus: "0.05"
-          memory: "15MB"
+          memory: "165MB"
 
 networks:
   rinha-net:
